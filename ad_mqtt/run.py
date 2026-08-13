@@ -1,9 +1,12 @@
 import logging
+from logging.handlers import RotatingFileHandler
+
 import alarmdecoder as AD
 import insteon_mqtt as IM
+
+from . import Devices
 from .Bridge import Bridge
 from .Client import Client
-from . import Devices
 from .Discovery import Discovery
 
 
@@ -17,7 +20,7 @@ def setup_logging(log_cfg):
         screen_handler.setFormatter(formatter)
 
     if log_cfg.file:
-        file_handler = logging.handlers.RotatingFileHandler(
+        file_handler = RotatingFileHandler(
             log_cfg.file, maxBytes=log_cfg.size_kb * 1000,
             backupCount=log_cfg.backup_count)
         file_handler.setFormatter(formatter)
@@ -41,14 +44,14 @@ def run(cfg, alarm_code, devices, restore_all=False):
         # Alarm decoder network device.
         ad_client = Client(cfg.alarm.host, cfg.alarm.port)
         decoder = AD.AlarmDecoder(ad_client)
-        decoder._wire_events()
+        decoder.wire_events()
 
         mqtt_client = IM.network.Mqtt(id="ad-mqtt")
         # IM uses dict: cfg['a'] not cfg.a
         mqtt_client.load_config(cfg.mqtt.__dict__)
 
         bridge = Bridge(mqtt_client, decoder, alarm_code, zones, rf_devices)
-        discovery = Discovery(mqtt_client, bridge, zones)
+        _discovery = Discovery(mqtt_client, bridge, zones)
 
         loop = IM.network.poll.Manager()
         loop.add(ad_client, connected=False)
@@ -59,6 +62,6 @@ def run(cfg, alarm_code, devices, restore_all=False):
 
         while loop.active():
             loop.select()
-    except:
+    except Exception:
         log.exception("Unexpected exception")
         raise
