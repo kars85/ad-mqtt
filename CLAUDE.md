@@ -8,7 +8,9 @@ of all three repos.
 
 ## Couplings
 
-- **alarmdecoder library** (still unpinned in `requirements.txt`) — `ad_mqtt/run.py` uses
+- **alarmdecoder library** (pinned in `requirements.txt` to
+  `git+https://github.com/kars85/alarmdecoder@1.14.0`, a Git-tag-only release on a
+  private repo — installs need git auth) — `ad_mqtt/run.py` uses
   public `decoder.wire_events()` because `ad_mqtt/Client.py` duck-types the device API and
   owns its lifecycle through the legacy poll manager. `ad_mqtt/Bridge.py` consumes exactly
   21 events plus `Message`/`RFMessage` attributes. `tests/test_alarmdecoder_contract.py`
@@ -28,8 +30,8 @@ run the consumer contract tests. Do not replace explicit `wire_events()` with
 `AlarmDecoder.open()` while `Client` remains a poll-manager-owned duck type.
 
 The focused library contract tests use standard-library `unittest` and in-memory fakes;
-they need no MQTT broker or ser2sock instance. With the sibling modernization tree under
-`../alarmdecoder`, run them with:
+they need no MQTT broker or ser2sock instance. Run them against the pinned, installed
+distribution; the sibling-tree form is a development convenience:
 
 ```bash
 PYTHONPATH=../alarmdecoder python3 -m unittest discover -s tests -v
@@ -39,6 +41,6 @@ PYTHONPATH=../alarmdecoder python3 -m unittest discover -s tests -v
 
 - Depends on a personal fork of insteon-mqtt (`f1d094/...paho-mqtt-1.6.1`, unpinned HEAD)
   purely for its select loop + paho wrapper — top modernization target.
-- The safe AlarmDecoder compatibility slice is implemented, but the dependency remains
-  unpinned until an immutable modernization release is published.
+- The safe AlarmDecoder compatibility slice is implemented and the dependency is pinned
+  to released tag `1.14.0`; contract tests pass against the installed wheel.
 - Modernization plan: [`docs/modernization-plan.md`](docs/modernization-plan.md).
