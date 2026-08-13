@@ -5,9 +5,12 @@ Status reviewed 2026-08-13 against the current source tree. Decision (see
 rewritten core deployed as a container in the Proxmox-VM compose stack. It becomes the
 only consumer of the alarmdecoder library after the separate webapp retirement completes.
 
-The safe AlarmDecoder compatibility slice is implemented in this tree. It is not a full
-ad-mqtt v2 rewrite, and the library dependency must remain unpinned until an immutable
-modernization release is available.
+The safe AlarmDecoder compatibility slice is implemented in this tree and the library
+dependency is pinned to the released `alarmdecoder` tag `1.14.0`
+(https://github.com/kars85/alarmdecoder/releases/tag/1.14.0, Git-tag-only release —
+no PyPI). This is not yet the full ad-mqtt v2 rewrite. Note the pin targets the
+private `kars85/alarmdecoder` repository, so every install path (developer venv,
+CI, Docker build) needs git auth for that host.
 
 ## External contracts to preserve
 
@@ -27,10 +30,15 @@ modernization release is available.
   `RFMessage` flow through the real decoder into an in-memory MQTT fake.
 - [x] Keep these tests independent of live MQTT/ser2sock and the legacy insteon-mqtt
   transport; they use standard-library `unittest` and add no dependency.
-- [ ] Pin `alarmdecoder` to the immutable modernization release once it is published.
-  Do not invent or pin an unpublished version.
+- [x] Pin `alarmdecoder` to the immutable modernization release once it is published.
+  Do not invent or pin an unpublished version. (Pinned in `requirements.txt` to
+  `alarmdecoder @ git+https://github.com/kars85/alarmdecoder@1.14.0`, commit
+  `641d46b`; the 4 contract tests pass against the installed 1.14.0 wheel, not the
+  sibling path.)
 
-Run the compatibility slice against the sibling library tree with:
+Run the compatibility slice against the pinned, installed distribution
+(`pip install -r requirements.txt` in a venv, then `python3 -m unittest discover -s
+tests -v`). The sibling-tree form remains a development convenience only:
 
 ```bash
 PYTHONPATH=../alarmdecoder python3 -m unittest discover -s tests -v
@@ -46,7 +54,7 @@ an `asyncio.open_connection` + `readline()` loop replaces it in fewer lines. Als
 `pyyaml`/`Jinja2` (never imported here — transitive insteon-mqtt needs) and the invalid
 `git+https://...#egg=` line that breaks `pip install .` (setup.py:20).
 
-Pin the released AlarmDecoder version exactly and pin the supported paho major as part of
+The AlarmDecoder pin (`1.14.0`) is done; pin the supported paho major as part of
 this rewrite. The public wiring migration is already complete; do not replace it with
 `AlarmDecoder.open()` because the current `Client` does not implement the library Device
 open API.
@@ -81,6 +89,8 @@ everything else.
 
 - Dockerfile: `python:3.13-slim`, non-root `USER`, `HEALTHCHECK` (e.g. MQTT availability
   topic freshness), `.dockerignore`. Today: `python:3.10.7` full image, root, no healthcheck.
+  The alarmdecoder pin is a private git dependency: the image build needs git plus auth
+  (e.g. a build secret token) or the wheel handed in from the GitHub release instead.
 - Ship a real `docker-compose.yml` (bridge + mosquitto reference; README example currently
   points at `rgriffogoes/ad-mqtt:latest`).
 - CI: fix `.github/workflows/docker-image.yml` — currently pushes to rgriffogoes' Docker Hub
