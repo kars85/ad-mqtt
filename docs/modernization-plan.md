@@ -61,6 +61,16 @@ open API.
 
 ## Phase 2 — bug fixes (from audit, keep behavior otherwise)
 
+0. **DSC panel command sequences (blocking for cutover).** The deployed panel is DSC
+   hardware, but every command path sends Ademco Vista key sequences: `code+2`/
+   `code+3`/`code+7`/`code+1` arm/disarm (`Bridge.py:77-84`), `code+6#` bypass prefix
+   (`Bridge.py:75`), `code+9` chime toggle (`Bridge.py:109`). DSC PowerSeries uses
+   different sequences (disarm is the code alone, `*1<zones>#` bypass, `*4` chime,
+   stay/away via function keys). Branch the key sequences on the decoder's panel mode
+   (`alarmdecoder.panels.DSC`, populated from the AD2 `CONFIG` response) and verify
+   each against the real panel during the one-command-path-at-a-time canary. Reading
+   state (events, zone faults) is unaffected; this blocks only command paths.
+
 1. TLS config silently ignored — nested `Data` attrs never survive `cfg.mqtt.__dict__`
    (`Config.py:25-29` + `ad_mqtt/run.py:48`): setting `ADMQTT_MQTT_CA_CERT` does nothing.
    Rewrite config plumbing (falls out of Phase 1).

@@ -17,6 +17,9 @@ of all three repos.
   guards those subscriptions, callback signatures, and representative panel/RF flow.
 - **ser2sock** — `ad_mqtt/Client.py:61` plaintext TCP, newline framing, no TLS. If the webapp
   turns on ser2sock SSL, this bridge cannot connect.
+- **Panel is DSC hardware.** All Bridge command sequences (arm/disarm/bypass/chime) are
+  currently Ademco Vista style and wrong for DSC — see Phase 2 item 0 in the
+  modernization plan. Event/state consumption is panel-agnostic through the library.
 - **Home Assistant** — MQTT discovery payloads in `ad_mqtt/Discovery.py` are the external
   contract; topics in `ad_mqtt/Bridge.py:25-39` are retained state HA depends on.
 - **alarmdecoder-webapp** — no direct coupling; shares ser2sock and the physical AD2 device.
