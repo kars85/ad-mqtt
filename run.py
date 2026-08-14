@@ -1,33 +1,42 @@
 #!./venv/bin/python
 
-import sys
 import os
-sys.path.insert( 0, "." )
-import ad_mqtt as AD
+import sys
+
+sys.path.insert(0, ".")
+import ad_mqtt as AD  # noqa: E402
 
 cfg = AD.Config()
 
 # Alarm Decoder ser2sock server location.
-cfg.alarm.host = os.getenv("ADMQTT_SOCKET_HOST","127.0.0.1")
-cfg.alarm.port = int(os.getenv("ADMQTT_SOCKET_PORT",10000))
+cfg.alarm.host = os.getenv("ADMQTT_SOCKET_HOST", "127.0.0.1")
+cfg.alarm.port = int(os.getenv("ADMQTT_SOCKET_PORT", 10000))
 # To reset all zones to closed (not faulted) on startup, set this to True
-cfg.alarm.restore_on_startup = bool(os.getenv("ADMQTT_RESTORE_ON_STARTUP",False))
+cfg.alarm.restore_on_startup = bool(
+    os.getenv("ADMQTT_RESTORE_ON_STARTUP", False)
+)
+# Physical panel writes are disabled unless explicitly enabled after canary.
+cfg.alarm.commands_enabled = (
+    os.getenv("ADMQTT_COMMANDS_ENABLED", "false").strip().lower()
+    in ("1", "true", "yes", "on")
+)
+cfg.alarm.command_unlock_file = os.getenv("ADMQTT_COMMANDS_UNLOCK_FILE")
 
 # MQTT Broker connection
-cfg.mqtt.broker = os.getenv("ADMQTT_MQTT_HOST","127.0.0.1")
-cfg.mqtt.port = int(os.getenv("ADMQTT_MQTT_PORT",1883))
+cfg.mqtt.broker = os.getenv("ADMQTT_MQTT_HOST", "127.0.0.1")
+cfg.mqtt.port = int(os.getenv("ADMQTT_MQTT_PORT", 1883))
 # Optional user/pass for the broker
-cfg.mqtt.username = os.getenv("ADMQTT_MQTT_USERNAME",None)
-cfg.mqtt.password = os.getenv("ADMQTT_MQTT_PASSWORD",None)
+cfg.mqtt.username = os.getenv("ADMQTT_MQTT_USERNAME", None)
+cfg.mqtt.password = os.getenv("ADMQTT_MQTT_PASSWORD", None)
 # Optional encryption settings for the broker.
-cfg.mqtt.encryption.ca_cert = os.getenv("ADMQTT_MQTT_CA_CERT",None)
-cfg.mqtt.encryption.certfile = os.getenv("ADMQTT_MQTT_CERTFILE",None)
-cfg.mqtt.encryption.keyfile = os.getenv("ADMQTT_MQTT_KEYFILE",None)
+cfg.mqtt.encryption.ca_cert = os.getenv("ADMQTT_MQTT_CA_CERT", None)
+cfg.mqtt.encryption.certfile = os.getenv("ADMQTT_MQTT_CERTFILE", None)
+cfg.mqtt.encryption.keyfile = os.getenv("ADMQTT_MQTT_KEYFILE", None)
 
 # Debugging information
-cfg.log.level = os.getenv("ADMQTT_LOG_LEVEL","INFO")
-cfg.log.screen = bool(os.getenv("ADMQTT_LOG_SCREEN",False))
-file_config = os.getenv("ADMQTT_LOG_FILE","log.txt")
+cfg.log.level = os.getenv("ADMQTT_LOG_LEVEL", "INFO")
+cfg.log.screen = bool(os.getenv("ADMQTT_LOG_SCREEN", False))
+file_config = os.getenv("ADMQTT_LOG_FILE", "log.txt")
 # Allowing env var to disable default file logging
 if len(file_config) == 0:
     file_config = None
@@ -38,10 +47,18 @@ cfg.log.modules = ["ad_mqtt", "insteon_mqtt"]
 
 # For possible device class values, see:
 # https://www.home-assistant.io/integrations/binary_sensor/#device-class
-alarm_code = os.getenv("ADMQTT_ALARM_CODE","1234")
+alarm_code = os.getenv("ADMQTT_ALARM_CODE")
+if cfg.alarm.commands_enabled and not alarm_code:
+    raise RuntimeError(
+        "ADMQTT_ALARM_CODE is required when panel commands are enabled"
+    )
+if cfg.alarm.commands_enabled:
+    cfg.consume_command_unlock(cfg.alarm.command_unlock_file)
+if alarm_code is None:
+    alarm_code = ""
 
 # Getting devices configuration
 exec(open("devices.py").read())
-devices = get_devices()
+devices = get_devices()  # noqa: F821
 
 AD.run.run(cfg, alarm_code, devices)

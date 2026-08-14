@@ -33,6 +33,7 @@ def setup_logging(log_cfg):
         if log_cfg.file:
             log.addHandler(file_handler)
 
+
 def run(cfg, alarm_code, devices, restore_all=False):
     setup_logging(cfg.log)
 
@@ -40,9 +41,14 @@ def run(cfg, alarm_code, devices, restore_all=False):
 
     try:
         zones, rf_devices = Devices.init_devices(devices)
+        commands_enabled = getattr(cfg.alarm, "commands_enabled", False)
 
         # Alarm decoder network device.
-        ad_client = Client(cfg.alarm.host, cfg.alarm.port)
+        ad_client = Client(
+            cfg.alarm.host,
+            cfg.alarm.port,
+            commands_enabled=commands_enabled,
+        )
         decoder = AD.AlarmDecoder(ad_client)
         decoder.wire_events()
 
@@ -50,8 +56,17 @@ def run(cfg, alarm_code, devices, restore_all=False):
         # IM uses dict: cfg['a'] not cfg.a
         mqtt_client.load_config(cfg.mqtt.__dict__)
 
-        bridge = Bridge(mqtt_client, decoder, alarm_code, zones, rf_devices)
-        _discovery = Discovery(mqtt_client, bridge, zones)
+        bridge = Bridge(
+            mqtt_client,
+            decoder,
+            alarm_code,
+            zones,
+            rf_devices,
+            commands_enabled=commands_enabled,
+            authorize_panel_write=ad_client.authorize_write,
+            cancel_panel_write=ad_client.cancel_write,
+        )
+        Discovery(mqtt_client, bridge, zones)
 
         loop = IM.network.poll.Manager()
         loop.add(ad_client, connected=False)

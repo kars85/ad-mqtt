@@ -1,4 +1,5 @@
 import logging
+import os
 
 
 class Data (dict):
@@ -6,6 +7,25 @@ class Data (dict):
 
 
 class Config:
+    @staticmethod
+    def consume_command_unlock(path):
+        """Atomically consume the explicit one-shot command unlock file."""
+        if not path:
+            raise RuntimeError(
+                "ADMQTT_COMMANDS_UNLOCK_FILE is required when panel "
+                "commands are enabled"
+            )
+
+        consumed_path = path + ".consumed"
+        try:
+            os.replace(path, consumed_path)
+        except FileNotFoundError as error:
+            raise RuntimeError(
+                "Command unlock file is missing; inspect the panel before "
+                "creating a new one"
+            ) from error
+        return consumed_path
+
     def __init__(self):
         # ser2sock server information
         self.alarm = Data()
@@ -13,6 +33,9 @@ class Config:
         self.alarm.port = 1000
         # Reset all zones to not faulted on startup
         self.alarm.restore_on_startup = False
+        # Require an explicit opt-in before writing physical panel commands.
+        self.alarm.commands_enabled = False
+        self.alarm.command_unlock_file = None
 
         # MQTT broker (names must match insteon-mqtt settings variables)
         self.mqtt = Data()
