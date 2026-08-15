@@ -1,4 +1,5 @@
 import ast
+import errno
 import inspect
 import json
 import runpy
@@ -573,6 +574,69 @@ class AlarmDecoderContractTest(TestCase):
         self.assertListEqual(closed, [client])
         self.assertTrue(EofSocket.was_closed)
         self.assertIsNone(client.socket)
+
+    def test_client_closes_on_terminal_socket_errors_without_raising(self):
+        # As asyncio reader/writer callbacks, a raise would leave the fd
+        # registered and the supervisor never reconnecting.  Every socket
+        # error other than EWOULDBLOCK/ETIMEDOUT must close instead.
+        client_type = self.load_client_type()
+
+        def broken_socket(errno_code):
+            class BrokenSocket:
+                was_closed = False
+
+                @staticmethod
+                def recv(_size):
+                    raise OSError(errno_code, "broken")
+
+                @staticmethod
+                def send(_data):
+                    raise OSError(errno_code, "broken")
+
+                @staticmethod
+                def shutdown(_how):
+                    return None
+
+                @classmethod
+                def close(cls):
+                    cls.was_closed = True
+
+            return BrokenSocket
+
+        # Terminal write error (EPIPE after ser2sock drops mid-write).
+        client = client_type(commands_enabled=False)
+        closed = []
+        client.signal_closing.connect(lambda link: closed.append(link))
+        sock = broken_socket(errno.EPIPE)
+        client.socket = sock()
+        client._write_buf = b"C\r"
+        client.write_to_link(0)
+        self.assertListEqual(closed, [client])
+        self.assertTrue(sock.was_closed)
+        self.assertIsNone(client.socket)
+
+        # Terminal read error (ECONNABORTED).
+        client = client_type(commands_enabled=False)
+        closed = []
+        client.signal_closing.connect(lambda link: closed.append(link))
+        sock = broken_socket(errno.ECONNABORTED)
+        client.socket = sock()
+        self.assertEqual(client.read_from_link(), -1)
+        self.assertListEqual(closed, [client])
+        self.assertTrue(sock.was_closed)
+        self.assertIsNone(client.socket)
+
+        # Retryable errors still do not close.
+        client = client_type(commands_enabled=False)
+        closed = []
+        client.signal_closing.connect(lambda link: closed.append(link))
+        sock = broken_socket(errno.EWOULDBLOCK)
+        client.socket = sock()
+        client._write_buf = b"C\r"
+        client.write_to_link(0)
+        self.assertEqual(client.read_from_link(), 0)
+        self.assertListEqual(closed, [])
+        self.assertFalse(sock.was_closed)
 
     def test_programming_kpm_discards_a_partial_action_suffix(self):
         client_type = self.load_client_type()
