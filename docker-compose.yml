@@ -47,6 +47,19 @@ services:
       ADMQTT_SOCKET_PORT: "10000"
 
       # --- MQTT broker ---
+      # Using an existing broker instead of the bundled mosquitto? Remove
+      # the `mosquitto:` service, its volume, and the `depends_on:` block,
+      # then pick one:
+      #   a) broker container on this host with 1883 published: set
+      #      ADMQTT_MQTT_HOST: host.docker.internal and uncomment
+      #      `extra_hosts` below (Linux; Docker Desktop has it built in);
+      #   b) broker container on this host, port not published: join that
+      #      project's network (networks: [broker-net] + an external
+      #      network block naming e.g. otherproject_default) and use its
+      #      service name as the host;
+      #   c) broker on another machine: plain hostname/IP.
+      # The handoff broker rules follow the broker: auth + ACLs beyond an
+      # isolated VLAN, and purge historical `ad-mqtt` sessions on it.
       ADMQTT_MQTT_HOST: mosquitto                # service name below
       ADMQTT_MQTT_PORT: "1883"
       # Credentials for a non-anonymous broker:
@@ -74,6 +87,10 @@ services:
 
     # Alternatively keep secrets/overrides out of this file:
     # env_file: ad-mqtt.env
+
+    # For external-broker option (a) above:
+    # extra_hosts:
+    #   - host.docker.internal:host-gateway
 
     volumes:
       - ./zones.yaml:/etc/ad-mqtt/zones.yaml:ro
