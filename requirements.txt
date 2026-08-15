@@ -1,4 +1,3 @@
-pyyaml>=3
-Jinja2>=2.1
-alarmdecoder
-git+https://github.com/f1d094/insteon-mqtt_with_paho-mqtt-1.6.1#egg=insteon-mqtt
+paho-mqtt>=2,<3
+pyyaml>=6
+alarmdecoder @ git+https://github.com/kars85/alarmdecoder@1.14.0

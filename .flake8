@@ -14,7 +14,8 @@ ignore =
   E131,
   # allow lambda assignments
   E731,
-  # allow line break after binary operator
+  # allow modern line breaks around binary operators
+  W503,
   W504
 
 exclude = notes,

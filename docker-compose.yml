@@ -1,0 +1,41 @@
+# Reference compose stack: ad-mqtt bridge + mosquitto broker.
+#
+# Before `docker compose up`:
+#   - put a GitHub token that can read kars85/alarmdecoder in ./.git-token
+#   - copy zones.yaml.example to ./zones.yaml and edit for your panel
+#   - copy mosquitto.conf.example to ./mosquitto.conf (enable auth for any
+#     non-isolated network; the DSC cutover handoff requires an ACL'd broker)
+services:
+  ad-mqtt:
+    build:
+      context: .
+      secrets:
+        - git_token
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    environment:
+      ADMQTT_SOCKET_HOST: ser2sock.example.lan
+      ADMQTT_SOCKET_PORT: "10000"
+      ADMQTT_MQTT_HOST: mosquitto
+      # Physical panel commands stay disabled until every cutover gate in
+      # docs/dsc-cutover-handoff.md passes.
+      ADMQTT_COMMANDS_ENABLED: "false"
+    volumes:
+      - ./zones.yaml:/etc/ad-mqtt/zones.yaml:ro
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+
+volumes:
+  mosquitto-data:
+
+secrets:
+  git_token:
+    file: ./.git-token

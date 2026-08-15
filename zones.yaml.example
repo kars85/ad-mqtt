@@ -1,0 +1,50 @@
+# Zone configuration for ad-mqtt.  Copy to zones.yaml (or point
+# ADMQTT_DEVICES_FILE at it) and edit for your panel.
+#
+# device_class is optional; see
+# https://www.home-assistant.io/integrations/binary_sensor/#device-class
+# When omitted it is guessed from keywords in the entity/label
+# (fire -> smoke, door, window).
+
+zones:
+  - zone: 1
+    entity: fire
+    label: Fire Alarm
+    device_class: smoke
+  - zone: 2
+    entity: basement_door
+    label: Basement Door
+
+# RF devices with a single loop.
+rf_zones:
+  - serial: "12345"
+    zone: 25
+    entity: front_door
+    label: Front Door
+  - serial: "12345"
+    zone: 27
+    entity: dining_room_door
+    label: Dining Room Door
+  - serial: "12345"
+    zone: 29
+    entity: kitchen_window_right
+    label: Kitchen Right Window
+  - serial: "12345"
+    zone: 30
+    entity: guest_bedroom_window
+    label: Guest Bedroom Window
+
+# RF devices using multiple loops.  List entries in loop order; use null
+# for unused loops.
+rf:
+  - serial: "12345"
+    loops:
+      - zone: 31
+        entity: side_window
+        label: Side Window
+      - null
+      - null
+      - zone: 32
+        entity: side_window_tamper
+        label: Side Window Tamper
+        device_class: tamper

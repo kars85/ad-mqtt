@@ -2,24 +2,78 @@
 import errno
 import logging
 import socket
-import insteon_mqtt.network as IN
 import alarmdecoder.event as ADE
+
+from .Signal import Signal
 
 LOG = logging.getLogger(__name__)
 
 
-class Client (IN.Link):
+class Client:
     # Alarmdecoder signals to implement the device api.  Also need write().
     on_open = ADE.event.Event("Connected event.  f(link)")
     on_close = ADE.event.Event("Close event.  f(link)")
     on_read = ADE.event.Event("Read cb.  f(link, bytes)")
     on_write = ADE.event.Event("Written db.  f(link, data)")
 
-    def __init__(self, host='', port=10000, reconnect_dt=30):
-        IN.Link.__init__(self)
+    def __init__(self, host='', port=10000, reconnect_dt=30,
+                 commands_enabled=False):
+        self.signal_closing = Signal()
+        self.signal_connected = Signal()
+        self.signal_needs_write = Signal()
         self.addr = (host, port)
         self.reconnect_dt = reconnect_dt
+        self.commands_enabled = commands_enabled
         self._init_vars()
+
+    #-----------------------------------------------------------------------
+    def authorize_write(self, data, on_sent=None):
+        """Authorize one exact, one-shot panel write from Bridge."""
+        if not self.commands_enabled:
+            LOG.warning("Panel write authorization denied in read-only mode")
+            return None
+
+        if not isinstance(data, bytes):
+            data = data.encode("utf-8")
+        if not data:
+            return None
+        if self._authorized_write is not None:
+            LOG.error("Panel transport already has a pending authorization")
+            return None
+
+        token = object()
+        self._authorized_write = (token, data, on_sent)
+        return token
+
+    #-----------------------------------------------------------------------
+    def cancel_write(self, token):
+        """Discard a write's unsent bytes; report if no prefix was sent."""
+        if (self._authorized_write is not None
+                and self._authorized_write[0] == token):
+            self._authorized_write = None
+            return True
+
+        offset = 0
+        for index, segment in enumerate(self._write_segments):
+            if segment["token"] != token:
+                offset += segment["remaining"]
+                continue
+
+            wholly_unsent = not segment["sent"]
+            end = offset + segment["remaining"]
+            self._write_buf = self._write_buf[:offset] + self._write_buf[end:]
+            self._write_segments.pop(index)
+            if not self._write_buf:
+                self.signal_needs_write.emit(self, False)
+            if not wholly_unsent:
+                LOG.error(
+                    "Discarded %s buffered bytes after a partial panel write; "
+                    "operator recovery required",
+                    segment["remaining"],
+                )
+            return wholly_unsent
+
+        return False
 
     #-----------------------------------------------------------------------
     def write(self, data):
@@ -29,38 +83,62 @@ class Client (IN.Link):
         if not isinstance(data, bytes):
             data = data.encode("utf-8")
 
-        LOG.debug("Adding %s bytes to write buffer of %s bytes: '%s'",
-                  len(data), len(self._write_buf), data)
+        token = None
+        on_sent = None
+        if data not in (b"C\r", b"V\r"):
+            if not self.commands_enabled:
+                LOG.warning(
+                    "Blocked %s outbound AlarmDecoder bytes in read-only "
+                    "mode",
+                    len(data),
+                )
+                return
+
+            authorization = self._authorized_write
+            if authorization is None or authorization[1] != data:
+                LOG.warning(
+                    "Blocked %s unauthorized AlarmDecoder bytes",
+                    len(data),
+                )
+                return
+
+            token, _authorized_data, on_sent = authorization
+            self._authorized_write = None
+
+        LOG.debug("Adding %s bytes to write buffer of %s bytes",
+                  len(data), len(self._write_buf))
         self._write_buf += data
+        self._write_segments.append({
+            "token": token,
+            "remaining": len(data),
+            "sent": 0,
+            "on_sent": on_sent,
+        })
 
         # Only need to emit if there was no data in the buffer already.
         self.signal_needs_write.emit(self, True)
 
     #-----------------------------------------------------------------------
-    def retry_connect_dt(self):
-        """Return a positive integer (seconds) if the link should reconnect.
-
-        If this returns None, the link will not be reconnected if it closes.
-        Otherwise this is the retry interval in seconds to try and reconnect
-        the link by calling connect().
-        """
-        return self.reconnect_dt
+    def poll(self, t):
+        """Restore write interest if data was queued before Manager.add()."""
+        if self._write_buf:
+            self.signal_needs_write.emit(self, True)
 
     #-----------------------------------------------------------------------
     def connect(self):
-        """Connect the link to the device.
-
-        This should connect to the socket, serial port, file, etc.
+        """Connect the link to ser2sock.
 
         Returns:
-          bool:  Returns True if the connection was successful or False it
+          bool:  Returns True if the connection was successful or False if
           it failed.
         """
         LOG.info("Connecting to %s:%s", *self.addr)
         try:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.connect(self.addr)
-        except:
+            # ponytail: blocking connect stalls the loop <=10s; switch to
+            # loop.sock_connect if that ever matters.
+            self.socket = socket.create_connection(self.addr, timeout=10)
+            self.socket.setblocking(False)
+        except OSError:
             LOG.exception("Failed to connect")
             if self.socket:
                 self.socket.close()
@@ -102,11 +180,13 @@ class Client (IN.Link):
 
             LOG.exception("Error during read")
             if e.errno in [errno.ECONNRESET, errno.EHOSTUNREACH]:
+                self.close()
                 return -1
             raise
 
         # If no data was read, the connection was closed.
         if len(buf) == 0:
+            self.close()
             return -1
 
         LOG.debug("Adding %s bytes to read buffer of %d bytes",
@@ -129,7 +209,8 @@ class Client (IN.Link):
 
             line = line.rstrip(b"\r\n")
 
-            LOG.debug("Processing line '%s'", line)
+            # Payload-free logging (handoff G1): never log raw panel lines.
+            LOG.debug("Processing %d byte line", len(line))
             self.on_read(data=line)
             self._read_buf = after
 
@@ -166,9 +247,32 @@ class Client (IN.Link):
         if num:
             self.on_write(data=self._write_buf[:num])
             self._write_buf = self._write_buf[num:]
+            self._consume_write_segments(num)
 
         if not len(self._write_buf):
             self.signal_needs_write.emit(self, False)
+
+    #-----------------------------------------------------------------------
+    def _consume_write_segments(self, count):
+        callbacks = []
+        while count and self._write_segments:
+            segment = self._write_segments[0]
+            consumed = min(count, segment["remaining"])
+            segment["remaining"] -= consumed
+            segment["sent"] += consumed
+            count -= consumed
+            if segment["remaining"]:
+                continue
+
+            self._write_segments.pop(0)
+            if segment["on_sent"] is not None:
+                callbacks.append((segment["on_sent"], segment["token"]))
+
+        for callback, token in callbacks:
+            try:
+                callback(token)
+            except Exception:
+                LOG.exception("Panel write completion callback failed")
 
     #-----------------------------------------------------------------------
     def close(self):
@@ -196,9 +300,10 @@ class Client (IN.Link):
     def _init_vars(self):
         "TODO:"
         self.socket = None
-        self._fileno = None
         self._read_buf = bytes()
         self._write_buf = bytes()
+        self._write_segments = []
+        self._authorized_write = None
         self.isClosing = False
 
     #-----------------------------------------------------------------------

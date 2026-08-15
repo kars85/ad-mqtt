@@ -1,4 +1,34 @@
 
+def load_devices(path):
+    """Load zone definitions from a YAML file (replaces exec of devices.py).
+
+    Schema:
+      zones:    [{zone, entity, label, device_class?}, ...]
+      rf_zones: [{serial, zone, entity, label}, ...]
+      rf:       [{serial, loops: [{zone, entity, label, device_class?}|null,
+                                  ...]}, ...]
+    """
+    import yaml
+    with open(path) as handle:
+        data = yaml.safe_load(handle) or {}
+
+    devices = []
+    for item in data.get("zones") or []:
+        devices.append(Zone(item["zone"], item["entity"], item["label"],
+                            item.get("device_class")))
+    for item in data.get("rf_zones") or []:
+        devices.append(RfZone(str(item["serial"]), item["zone"],
+                              item["entity"], item["label"]))
+    for item in data.get("rf") or []:
+        loops = [
+            Zone(loop["zone"], loop["entity"], loop["label"],
+                 loop.get("device_class")) if loop else None
+            for loop in item.get("loops") or []
+        ]
+        devices.append(Rf(str(item["serial"]), loops))
+    return devices
+
+
 def init_devices(devices):
     zones, rf_devices = {}, {}
 
@@ -31,10 +61,10 @@ class Rf:
         assert len(loops) <= 4
         self.id = str(id)
         self.loops = [None] * 4
-        for i, l in enumerate(loops):
-            self.loops[i] = l
-            if l:
-                l.has_battery = True
+        for i, loop in enumerate(loops):
+            self.loops[i] = loop
+            if loop:
+                loop.has_battery = True
 
 
 class RfZone (Rf):
