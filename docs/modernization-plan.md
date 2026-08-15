@@ -123,9 +123,9 @@ gone. The public wiring migration stands; do not replace it with `AlarmDecoder.o
    intended `*9` behavior, and capture the deployed AD2 firmware's `!Sending` response count for
    ordinary and S4/S5 keys. Then canary chime, bypass, stay/disarm, night/disarm, and away/disarm
    one path at a time with an operator present. Until those checks pass, leave
-   `ADMQTT_COMMANDS_ENABLED=false`. The guarded branch still needs independent review,
-   hardware evidence, a release identity, and an immutable tag before deployment; no
-   deployable revision exists yet.
+   `ADMQTT_COMMANDS_ENABLED=false`. The guarded build now has a release identity
+   (immutable tag `2.0.0`), but it still needs independent review and hardware evidence
+   before deployment; no canary-qualified revision exists yet.
    The executable release, shadow, canary, rollback, and production checklist is in
    [`docs/dsc-cutover-handoff.md`](dsc-cutover-handoff.md).
 
@@ -169,8 +169,8 @@ file exists — remove it next release. `ADMQTT_*` env vars stay for everything 
 - **Done.** `docker-compose.yml` reference stack (bridge + mosquitto,
   `mosquitto.conf.example`).
 - **Partially done.** Version is 2.0.0 (`ad_mqtt/version.py`, single source; discovery
-  `sw_version` reads it). The immutable release tag still requires independent review and
-  the hardware canary — no deployable revision exists yet.
+  `sw_version` reads it) and immutable tag `2.0.0` is published. Independent review and
+  the hardware canary are still required — no canary-qualified revision exists yet.
 - **Done.** CI: `docker-image.yml` lints (ruff) and runs the suite, then builds and pushes
   `ghcr.io/kars85/ad-mqtt` on main; needs an `ALARMDECODER_TOKEN` repo secret (read access
   to kars85/alarmdecoder). CodeQL bumped to v3. `pyproject.toml` replaces `setup.py`.
