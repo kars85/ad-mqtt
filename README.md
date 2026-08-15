@@ -1,6 +1,6 @@
 
 [![Docker Image CI](https://github.com/kars85/ad-mqtt/actions/workflows/docker-image.yml/badge.svg)](https://github.com/kars85/ad-mqtt/actions/workflows/docker-image.yml)
-[![codeql](https://github.com/kars85/ad-mqtt/actions/workflows/codeql.yml/badge.svg)](https://github.com/kars85/ad-mqtt/actions/workflows/codeql.yml)
+[![CodeQL](https://github.com/kars85/ad-mqtt/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/kars85/ad-mqtt/security/code-scanning)
 
 #### AlarmDecoder to MQTT Bridge (ad-mqtt)
 
