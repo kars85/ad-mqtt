@@ -16,8 +16,12 @@ can be used to create real "last changed" time sensors if desired in HASS.
 There is no deployable DSC revision until this work is committed, reviewed, and assigned an
 approved immutable commit or tag. Do not clone the default branch for a cutover, and do not
 edit tracked source after approval. The private AlarmDecoder dependency requires GitHub
-credentials. The unreleased tree still reports historical version `0.3.2`; do not use that
-version string as rollout identity.
+credentials. The tree now reports version `2.0.0`, but only a reviewed immutable tag is a
+rollout identity; historical `0.3.2` artifacts must never be used for DSC commands.
+
+Zones are configured in a YAML file (see `zones.yaml.example`; path override via
+`ADMQTT_DEVICES_FILE`). The legacy executable `devices.py` is deprecated and read only
+when no YAML file exists.
 
 The remaining release, shadow, hardware-canary, rollback, and production steps are tracked in
 [`docs/dsc-cutover-handoff.md`](docs/dsc-cutover-handoff.md).
@@ -40,14 +44,23 @@ cd /etc/ad-mqtt-site
 
 ##### Direct Docker Execution
 
-No published container image contains this DSC safety work, and the current Dockerfile has no
-credential path for the private AlarmDecoder dependency. It is not a cutover artifact. Use the
-host-venv path above until an authenticated, revision-pinned image build is implemented.
+The Dockerfile builds a non-root `python:3.13-slim` image with a heartbeat-file
+`HEALTHCHECK`. Authenticate the private AlarmDecoder pin with a BuildKit secret:
+
+```bash
+docker build --secret id=git_token,src=.git-token -t ad-mqtt .
+```
+
+No published container image contains this DSC safety work yet; a cutover artifact must be
+an image built from the approved immutable tag through CI. Never use the historical
+`rgriffogoes/ad-mqtt:latest` image for DSC commands.
 
 ##### Docker Compose
 
-Compose deployment remains a modernization follow-up for the same reason. In particular, do
-not use the historical `rgriffogoes/ad-mqtt:latest` image for DSC commands.
+`docker-compose.yml` is a reference stack (bridge + mosquitto). Copy
+`zones.yaml.example` to `zones.yaml`, `mosquitto.conf.example` to `mosquitto.conf`, put a
+read token for the AlarmDecoder repo in `.git-token`, then `docker compose up -d`. The
+same cutover restrictions apply: commands stay disabled until the handoff gates pass.
 
 ##### DSC command safety
 
@@ -100,6 +113,19 @@ retained broker topic during rollout. Also clear any retained values on `alarm/p
 `alarm/panel/chime/set`; all three physical command callbacks reject retained deliveries.
 
 ##### Changelog
+
+###### Version: 2.0.0 (unreleased)
+ - Replaced the insteon-mqtt fork transport with asyncio + paho-mqtt 2.x
+   (`clean_session=True`: offline commands are dropped by design, never replayed)
+ - MQTT TLS settings (`ADMQTT_MQTT_CA_CERT`/`CERTFILE`/`KEYFILE`) now actually apply
+ - Boolean env vars (`ADMQTT_RESTORE_ON_STARTUP`, `ADMQTT_LOG_SCREEN`) parse `"false"` correctly
+ - Panel state publishes even for unconfigured zones; alarm restore keeps the armed state;
+   `alarm/panel/faulted` is now published
+ - Restricted alarm-code file interface (`ADMQTT_ALARM_CODE_FILE`, handoff G15)
+ - Payload-free logging (handoff G1) and heartbeat/in-flight monitoring (handoff G14)
+ - YAML zone configuration (`zones.yaml`), deprecating executable `devices.py`
+ - `pyproject.toml` packaging, GHCR CI with lint + tests, non-root slim Docker image,
+   reference compose stack
 
 ###### Version: 0.3.2
  - updating codebase from original (TD22057) with minor logging fixes, improved Device attributes and versioning

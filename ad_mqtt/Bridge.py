@@ -57,6 +57,7 @@ class Bridge:
         self.retain = True
         self.panel_attr = {}
         self.panel_status = None
+        self._last_armed_status = None
         self.is_bypass = False
         self.last_alarm_zone = ""
 
@@ -82,6 +83,26 @@ class Bridge:
 
         self._connect()
         mqtt.signal_connected.connect(self.mqtt_connected)
+
+    def command_monitor(self):
+        """Payload-free in-flight command signal (handoff G14).
+
+        Read-only: monitoring must never clear, retry, or unlock an
+        operation.
+        """
+        in_flight = any(
+            token is not None
+            for token in (
+                self._action_write_token,
+                self._dsc_action_write_token,
+                self._chime_write_token,
+            )
+        )
+        return {
+            "in_flight": in_flight,
+            "ack_remaining": (self._action_ack_remaining
+                              + self._chime_ack_remaining),
+        }
 
     def reset_all_zones(self):
         # This is an explicit configured-zone reset, not a panel-derived
@@ -551,9 +572,9 @@ class Bridge:
         payload_args["time"] = time
 
         if zone is not None or zone_num is not None:
-            if not zone:
+            if zone is None:
                 zone = self.zones.get(zone_num)
-                if not zone:
+                if zone is None:
                     LOG.error("Skipping unknown zone %s", zone_num)
                     return
 
@@ -563,13 +584,14 @@ class Bridge:
 
         try:
             topic_str = topic.format(**topic_args)
-        except:
+        except Exception:
             LOG.exception("Error in MQTT topic formatting.\n"
                           "Topic: '%s'\nArgs: %s", topic, topic_args)
             return
 
         payload = json.dumps(payload_args)
-        LOG.info("Publish '%s' = %s", topic_str, payload)
+        # Payload-free logging (handoff G1): payloads can carry keypad text.
+        LOG.info("Publish '%s' (%d bytes)", topic_str, len(payload))
         self.mqtt.publish(topic_str, payload, qos=self.qos, retain=self.retain)
 
     def on_arm(self, dev, stay):
@@ -593,16 +615,34 @@ class Bridge:
         # Update the faulted zone first.
         info = self.zones.get(zone)
         if not info:
-            LOG.error("Skipping unknown zone %s", zone)
+            LOG.error("Alarm on unconfigured zone %s", zone)
+            self.last_alarm_zone = "unknown"
+            faulted = {
+                "status": "Zone %s" % zone,
+                "zone_num": zone if isinstance(zone, int) else 0,
+                "entity": "unknown",
+            }
         else:
             self.last_alarm_zone = info.entity
+            faulted = {
+                "status": getattr(info, "label", None) or info.entity,
+                "zone_num": info.zone,
+                "entity": info.entity,
+            }
 
+        self.publish(self.panel_faulted_topic, {}, faulted)
         self._update_panel_status("triggered", zone=zone)
 
     def on_alarm_restored(self, dev, zone, user=None):
         LOG.info("on_alarm_restored zone: %s", zone)
-        self._update_panel_status("disarmed", zone=zone)
+
+        # Some panels stay armed after an alarm clears; report the armed
+        # state from the latest KPM instead of forcing disarmed.
+        self._update_panel_status(self._last_armed_status or "disarmed",
+                                  zone=zone)
         self.last_alarm_zone = "None"
+        self.publish(self.panel_faulted_topic, {},
+                     {"status": "None", "zone_num": 0, "entity": "none"})
 
     def on_fire(self, dev, status):
         # message.fire_alarm
@@ -740,7 +780,7 @@ class Bridge:
         self.publish(self.chime_state_topic, {}, payload)
 
     def on_message(self, dev, message):
-        LOG.debug("on_message %s", repr(message))
+        LOG.debug("on_message panel_type=%s", message.panel_type)
 
         msg = message
         command_state_accepted = self._record_command_state(msg)
@@ -763,6 +803,15 @@ class Bridge:
             "ready": msg.ready,
             "zone_bypassed": msg.zone_bypassed,
             }
+
+        # Read-side memory of the armed bits so an alarm restore can report
+        # a panel that stays armed (see on_alarm_restored).
+        if msg.armed_away:
+            self._last_armed_status = "armed_away"
+        elif msg.armed_home:
+            self._last_armed_status = "armed_home"
+        else:
+            self._last_armed_status = None
 
         payload = {"status" : msg.text.strip()}
         self.publish(self.panel_msg_topic, {}, payload)
@@ -1008,7 +1057,9 @@ class Bridge:
             LOG.warning("Ignoring stale AlarmDecoder sending response")
 
     def on_expander_message(self, dev, message):
-        LOG.info("on_expander_message %s", repr(message))
+        LOG.info("on_expander_message type=%s addr=%s chan=%s value=%s",
+                 message.type, message.address, message.channel,
+                 message.value)
         if message.type != message.ZONE:
             return
 
@@ -1049,7 +1100,9 @@ class Bridge:
         return -1
 
     def on_lrr_message(self, dev, message):
-        LOG.info("on_lrr_message %s", repr(message))
+        LOG.info("on_lrr_message event_type=%s partition=%s",
+                 getattr(message, "event_type", None),
+                 getattr(message, "partition", None))
 
     def on_rfx_message(self, dev, message):
         msg = message
@@ -1286,4 +1339,9 @@ class Bridge:
 
         payload = {"status" : self.panel_status, "attr" : self.panel_attr,
                    "last_alarm_zone" : self.last_alarm_zone}
-        self.publish(self.panel_state_topic, {}, payload, zone_num=zone)
+        # Panel state must publish even when the zone is unconfigured; only
+        # attach the zone number when the zone is known.
+        info = self.zones.get(zone) if zone is not None else None
+        if info is not None:
+            payload["zone_num"] = info.zone
+        self.publish(self.panel_state_topic, {}, payload)

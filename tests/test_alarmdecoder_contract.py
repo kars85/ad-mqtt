@@ -6,7 +6,6 @@ import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from types import ModuleType
 from unittest import TestCase
 
 from alarmdecoder import AlarmDecoder
@@ -16,11 +15,10 @@ from alarmdecoder.messages import Message, RFMessage
 from alarmdecoder.panels import ADEMCO, DSC
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 
-# Importing ad_mqtt eagerly imports the legacy insteon-mqtt transport.  Load
-# Bridge directly so the contract suite needs AlarmDecoder but no broker,
-# ser2sock instance, or insteon-mqtt installation.
-Bridge = runpy.run_path(str(REPO_ROOT / "ad_mqtt" / "Bridge.py"))["Bridge"]
+from ad_mqtt.Bridge import Bridge  # noqa: E402
+from ad_mqtt.Client import Client  # noqa: E402
 
 MODE_CODES = {ADEMCO: "A", DSC: "D"}
 
@@ -252,35 +250,7 @@ class AlarmDecoderContractTest(TestCase):
 
     @staticmethod
     def load_client_type():
-        fake_package = ModuleType("insteon_mqtt")
-        fake_package.__path__ = []
-        fake_network = ModuleType("insteon_mqtt.network")
-
-        class FakeLink:
-            def __init__(self):
-                self.signal_closing = FakeSignal()
-                self.signal_connected = FakeSignal()
-                self.signal_needs_write = FakeSignal()
-
-        fake_network.Link = FakeLink
-        fake_package.network = fake_network
-        module_names = ("insteon_mqtt", "insteon_mqtt.network")
-        previous_modules = {
-            name: sys.modules.get(name)
-            for name in module_names
-        }
-        try:
-            sys.modules["insteon_mqtt"] = fake_package
-            sys.modules["insteon_mqtt.network"] = fake_network
-            return runpy.run_path(
-                str(REPO_ROOT / "ad_mqtt" / "Client.py")
-            )["Client"]
-        finally:
-            for name, previous in previous_modules.items():
-                if previous is None:
-                    sys.modules.pop(name, None)
-                else:
-                    sys.modules[name] = previous
+        return Client
 
     def publications_for(self, topic):
         return [
@@ -1517,14 +1487,34 @@ class AlarmDecoderContractTest(TestCase):
         bridge = self.make_bridge()
         self.confirm_panel_mode(ADEMCO)
 
-        with self.assertLogs(level="INFO") as captured:
+        # G1: the whole command/KPM/fault flow must be payload-free at
+        # DEBUG - no codes, keypad text, or raw panel lines in any record.
+        with self.assertLogs(level="DEBUG") as captured:
             self.send_panel_action(bridge, "arm_away")
             self.send_panel_action(bridge, "disarm", code="9876")
+            self.send_panel_state(
+                ADEMCO, ready=True, text="SECRET KEYPAD TEXT")
+            self.device.on_read(data=b"!EXP:07,01,01")
 
         log_text = "\n".join(captured.output)
         self.assertNotIn("0000", log_text)
         self.assertNotIn("9876", log_text)
         self.assertNotIn("00002", log_text)
+        self.assertNotIn("SECRET KEYPAD TEXT", log_text)
+        self.assertNotIn("!KPM", log_text)
+
+        client = self.load_client_type()(commands_enabled=False)
+        raw_line = panel_message(ADEMCO, text="SECRET KEYPAD TEXT")
+        with self.assertLogs(level="DEBUG") as captured:
+            client._read_buf = raw_line + b"\r\n"
+            try:
+                client.parse_read_buf()
+            except Exception:
+                # The decoder is not wired; only the log output matters.
+                pass
+        log_text = "\n".join(captured.output)
+        self.assertNotIn("SECRET KEYPAD TEXT", log_text)
+        self.assertNotIn("!KPM", log_text)
 
         client_tree = ast.parse(
             (REPO_ROOT / "ad_mqtt" / "Client.py").read_text()
@@ -1675,3 +1665,70 @@ class AlarmDecoderContractTest(TestCase):
             len(self.publications_for(state_topic)),
             initial_publications,
         )
+
+    def test_command_monitor_is_read_only_and_reports_in_flight(self):
+        bridge = self.make_bridge()
+        self.assertEqual(
+            bridge.command_monitor(),
+            {"in_flight": False, "ack_remaining": 0},
+        )
+
+        self.confirm_panel_mode(ADEMCO)
+        self.send_panel_state(ADEMCO)
+        self.send_panel_action(bridge, "disarm")
+        self.device.flush_writes()
+        monitor = bridge.command_monitor()
+        self.assertTrue(monitor["in_flight"])
+        self.assertGreater(monitor["ack_remaining"], 0)
+
+        self.device.acknowledge_writes()
+        monitor = bridge.command_monitor()
+        self.assertFalse(monitor["in_flight"])
+        self.assertEqual(monitor["ack_remaining"], 0)
+
+    def test_alarm_on_unconfigured_zone_still_publishes_triggered(self):
+        bridge = self.make_bridge()
+        bridge.on_alarm(self.decoder, 99)
+
+        states = self.publications_for(bridge.panel_state_topic)
+        self.assertEqual(states[-1]["payload"]["status"], "triggered")
+        self.assertEqual(
+            states[-1]["payload"]["last_alarm_zone"], "unknown")
+        faulted = self.publications_for(bridge.panel_faulted_topic)
+        self.assertEqual(faulted[-1]["payload"]["zone_num"], 99)
+        self.assertEqual(faulted[-1]["payload"]["entity"], "unknown")
+
+    def test_alarm_publishes_faulted_zone_sensor(self):
+        zone = FakeZone(5, "front_door")
+        bridge = self.make_bridge(zones={5: zone})
+        bridge.on_alarm(self.decoder, 5)
+
+        faulted = self.publications_for(bridge.panel_faulted_topic)
+        payload = faulted[-1]["payload"]
+        self.assertEqual(payload["status"], "front_door")
+        self.assertEqual(payload["zone_num"], 5)
+        self.assertEqual(payload["entity"], "front_door")
+
+        bridge.on_alarm_restored(self.decoder, 5)
+        payload = self.publications_for(
+            bridge.panel_faulted_topic)[-1]["payload"]
+        self.assertEqual(payload["status"], "None")
+        self.assertEqual(payload["zone_num"], 0)
+
+    def test_alarm_restore_reports_retained_armed_state(self):
+        zone = FakeZone(5, "front_door")
+        bridge = self.make_bridge(zones={5: zone})
+        self.confirm_panel_mode(DSC)
+        self.send_panel_state(DSC, armed_away=True, alarm_sounding=True)
+        bridge.on_alarm(self.decoder, 5)
+        bridge.on_alarm_restored(self.decoder, 5)
+
+        states = self.publications_for(bridge.panel_state_topic)
+        self.assertEqual(states[-1]["payload"]["status"], "armed_away")
+
+        # A panel that reports no armed bits still restores to disarmed.
+        self.send_panel_state(DSC)
+        bridge.on_alarm(self.decoder, 5)
+        bridge.on_alarm_restored(self.decoder, 5)
+        states = self.publications_for(bridge.panel_state_topic)
+        self.assertEqual(states[-1]["payload"]["status"], "disarmed")

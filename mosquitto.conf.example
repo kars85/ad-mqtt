@@ -1,0 +1,7 @@
+# Minimal mosquitto config for the reference compose stack.
+# For anything beyond an isolated test VLAN, disable anonymous access and
+# add per-user ACLs (see docs/dsc-cutover-handoff.md broker requirements).
+listener 1883
+allow_anonymous true
+persistence true
+persistence_location /mosquitto/data/

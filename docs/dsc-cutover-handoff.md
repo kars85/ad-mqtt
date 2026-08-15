@@ -128,13 +128,17 @@ DEBUG output during the canary.
 
 ### 1.2 Eliminate queued MQTT command replay
 
-The legacy wrapper constructs Paho with client ID `ad-mqtt` and `clean_session=False`. Clearing
-retained messages does **not** remove that broker-side persistent session, its subscriptions,
-or offline QoS 1 messages.
+**Code status (2026-08-14):** the transport rewrite (`ad_mqtt/Mqtt.py`, paho-mqtt 2.x)
+constructs the client with `clean_session=True`; a wrapper unit test is the tripwire against
+regressing this. Consequence by design: commands published while the bridge is offline are
+**dropped** by the broker, never queued and replayed — an operator must not expect an offline
+disarm to execute on reconnect. The legacy wrapper used client ID `ad-mqtt` with
+`clean_session=False`, and clearing retained messages does **not** remove that historical
+broker-side persistent session, its subscriptions, or offline QoS 1 messages — the broker
+purge steps below remain mandatory.
 
-Fix the client behavior before any physical canary. Prefer a clean command session
-(`clean_session=True` for MQTT 3.1.1, or clean start with session expiry zero for MQTT 5) and a
-configurable client ID. Add broker integration tests for both QoS 0 and QoS 1:
+The remaining G9 acceptance work is the live-broker integration evidence (unit tests cannot
+prove broker behavior). Add broker integration tests for both QoS 0 and QoS 1:
 
 1. connect and reach an authoritative, command-ready state;
 2. disconnect the bridge;

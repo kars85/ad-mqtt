@@ -2,13 +2,14 @@
 import errno
 import logging
 import socket
-import insteon_mqtt.network as IN
 import alarmdecoder.event as ADE
+
+from .Signal import Signal
 
 LOG = logging.getLogger(__name__)
 
 
-class Client (IN.Link):
+class Client:
     # Alarmdecoder signals to implement the device api.  Also need write().
     on_open = ADE.event.Event("Connected event.  f(link)")
     on_close = ADE.event.Event("Close event.  f(link)")
@@ -17,7 +18,9 @@ class Client (IN.Link):
 
     def __init__(self, host='', port=10000, reconnect_dt=30,
                  commands_enabled=False):
-        IN.Link.__init__(self)
+        self.signal_closing = Signal()
+        self.signal_connected = Signal()
+        self.signal_needs_write = Signal()
         self.addr = (host, port)
         self.reconnect_dt = reconnect_dt
         self.commands_enabled = commands_enabled
@@ -122,30 +125,20 @@ class Client (IN.Link):
             self.signal_needs_write.emit(self, True)
 
     #-----------------------------------------------------------------------
-    def retry_connect_dt(self):
-        """Return a positive integer (seconds) if the link should reconnect.
-
-        If this returns None, the link will not be reconnected if it closes.
-        Otherwise this is the retry interval in seconds to try and reconnect
-        the link by calling connect().
-        """
-        return self.reconnect_dt
-
-    #-----------------------------------------------------------------------
     def connect(self):
-        """Connect the link to the device.
-
-        This should connect to the socket, serial port, file, etc.
+        """Connect the link to ser2sock.
 
         Returns:
-          bool:  Returns True if the connection was successful or False it
+          bool:  Returns True if the connection was successful or False if
           it failed.
         """
         LOG.info("Connecting to %s:%s", *self.addr)
         try:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.connect(self.addr)
-        except:
+            # ponytail: blocking connect stalls the loop <=10s; switch to
+            # loop.sock_connect if that ever matters.
+            self.socket = socket.create_connection(self.addr, timeout=10)
+            self.socket.setblocking(False)
+        except OSError:
             LOG.exception("Failed to connect")
             if self.socket:
                 self.socket.close()
@@ -216,7 +209,8 @@ class Client (IN.Link):
 
             line = line.rstrip(b"\r\n")
 
-            LOG.debug("Processing line '%s'", line)
+            # Payload-free logging (handoff G1): never log raw panel lines.
+            LOG.debug("Processing %d byte line", len(line))
             self.on_read(data=line)
             self._read_buf = after
 
@@ -306,7 +300,6 @@ class Client (IN.Link):
     def _init_vars(self):
         "TODO:"
         self.socket = None
-        self._fileno = None
         self._read_buf = bytes()
         self._write_buf = bytes()
         self._write_segments = []

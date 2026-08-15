@@ -11,6 +11,6 @@ def get_devices():
     AD.Rf( 12345, loops=[
         AD.Zone(31, "side_window", "Side Window"),
         None, None,  # loops 2, 3 unused
-        AD.Zone(32, "side_window_tampler", "Side Window Tampler", "tampler"),
+        AD.Zone(32, "side_window_tamper", "Side Window Tamper", "tamper"),
         ]) 
     ]

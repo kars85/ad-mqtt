@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ad-mqtt"
+description = "Alarm Decoder <-> MQTT bridge server"
+readme = "README.md"
+license = {text = "GPL-3.0-only"}
+requires-python = ">=3.11"
+dynamic = ["version"]
+# The alarmdecoder pin targets a private repository; installs need git auth.
+dependencies = [
+    "paho-mqtt>=2,<3",
+    "pyyaml>=6",
+    "alarmdecoder @ git+https://github.com/kars85/alarmdecoder@1.14.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/kars85/ad-mqtt"
+
+[tool.setuptools]
+packages = ["ad_mqtt"]
+
+[tool.setuptools.dynamic]
+version = {attr = "ad_mqtt.version.__version__"}
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+"ad_mqtt/__init__.py" = ["F401"]

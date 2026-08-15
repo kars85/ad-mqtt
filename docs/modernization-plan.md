@@ -1,6 +1,13 @@
 # ad-mqtt — modernization status and plan
 
-Status reviewed 2026-08-13 against the current source tree. Decision (see
+Status reviewed 2026-08-14 against the current source tree. **All code-side work below is
+implemented**: the insteon-mqtt fork is replaced by asyncio + paho-mqtt 2.x, the Phase 2
+bug fixes, handoff code gates G1/G14/G15, YAML zone config, and the packaging/CI/release
+work are in the tree, with the contract suite green (65 tests) and ruff clean. What remains
+is not code: the physical/manual gates in `docs/dsc-cutover-handoff.md` (broker
+provisioning, shadow run, panel worksheet, exclusive-writer proof, attended canary),
+independent review, and cutting the immutable release tag. Version is now 2.0.0
+(unreleased). Decision (see
 `alarmdecoder/docs/ecosystem.md`): ad-mqtt stays the HA path (MQTT + discovery), with a
 rewritten core deployed as a container in the Proxmox-VM compose stack. It becomes the
 only consumer of the alarmdecoder library after the separate webapp retirement completes.
@@ -47,21 +54,19 @@ tests -v`). The sibling-tree form remains a development convenience only:
 PYTHONPATH=../alarmdecoder python3 -m unittest discover -s tests -v
 ```
 
-### Remaining dependency rewrite
+### Dependency rewrite — done
 
-Replace `insteon-mqtt` (personal-fork HEAD `f1d094/insteon-mqtt_with_paho-mqtt-1.6.1`,
-unpinned, exists only to pin paho 1.6.1) with **asyncio + paho-mqtt ≥2.x** (or `aiomqtt`).
-Only three symbols are used today: `network.Link` (`Client.Client`), `network.Mqtt`
-(`ad_mqtt.run.run`), and `network.poll.Manager` (`ad_mqtt.run.run`). `Client.py` already
-hand-rolls the whole TCP socket —
-an `asyncio.open_connection` + `readline()` loop replaces it in fewer lines. Also removes
-`pyyaml`/`Jinja2` (never imported here — transitive insteon-mqtt needs) and the invalid
-`git+https://...#egg=` line that breaks `pip install .` (setup.py:20).
-
-The AlarmDecoder pin (`1.14.0`) is done; pin the supported paho major as part of
-this rewrite. The public wiring migration is already complete; do not replace it with
-`AlarmDecoder.open()` because the current `Client` does not implement the library Device
-open API.
+`insteon-mqtt` is gone. The transport is now asyncio + paho-mqtt 2.x: `ad_mqtt/Signal.py`
+(minimal callback list), `ad_mqtt/Mqtt.py` (paho 2.x wrapper; paho's network thread owns
+MQTT and every Bridge-facing callback is marshaled onto the asyncio loop), and a
+supervisor coroutine in `ad_mqtt/run.py` that owns the Client lifecycle (readiness
+dispatch via `add_reader`/`add_writer`, reconnect after close). `Client` keeps its raw
+non-blocking socket and byte-level write-authorization state machine unchanged —
+asyncio streams cannot express partial-send accounting/cancel. **`clean_session=True` is
+a safety requirement (handoff G9): commands published while the bridge is offline are
+dropped by the broker, never queued and replayed**; a wrapper test is the tripwire.
+`pyyaml` is now a real dependency (zone config); `Jinja2` and the broken egg line are
+gone. The public wiring migration stands; do not replace it with `AlarmDecoder.open()`.
 
 ## Phase 2 — bug fixes (from audit, keep behavior otherwise)
 
@@ -124,57 +129,56 @@ open API.
    The executable release, shadow, canary, rollback, and production checklist is in
    [`docs/dsc-cutover-handoff.md`](dsc-cutover-handoff.md).
 
-1. TLS config silently ignored — nested `Data` attrs never survive `cfg.mqtt.__dict__`
-   (`Config.py:25-29` + `ad_mqtt/run.py:48`): setting `ADMQTT_MQTT_CA_CERT` does nothing.
-   Rewrite config plumbing (falls out of Phase 1).
-2. `bool(os.getenv(X, False))` at `run.py:14,29` — `"false"` evaluates True. Parse properly.
+1. **Fixed.** TLS settings now reach paho: `ad_mqtt/Mqtt.py` takes explicit kwargs, so the
+   nested-`Data` `cfg.mqtt.__dict__` bug is gone by construction; a wrapper test asserts
+   `tls_set` is applied when `ADMQTT_MQTT_CA_CERT` is set.
+2. **Fixed.** `env_bool()` in `run.py` parses `"false"`/`"0"` correctly for
+   `ADMQTT_RESTORE_ON_STARTUP` and `ADMQTT_LOG_SCREEN`.
 3. **Fixed in the compatibility slice:** import and use `RotatingFileHandler` directly
    instead of relying on an unimported `logging.handlers` submodule.
-4. `alarm/panel/faulted` is discovered but never published — the entity remains unknown
-   in HA. Publish it or drop it.
-5. Alarm on an unconfigured zone publishes nothing because `Bridge.publish()` skips the
-   unknown zone, swallowing the `triggered` panel state. Panel state must publish even for
-   unknown zones.
-6. `on_alarm_restored` forces `"disarmed"` even when some panels retain an armed state.
-   Resolve this separately with captured panel frames; it is not part of command encoding.
-7. Alarm code hygiene: Bridge and Client no longer log keypad JSON, rejected codes, or
-   generated key sequences; the runner no longer defaults to `"1234"` and refuses enabled
-   commands without an explicit code. The restricted file/secret interface in handoff G15 is
-   required before a release-qualifying canary; environment input is exploratory-only.
-8. `devices.py:14` `device_class="tampler"` → `tamper`.
+4. **Fixed.** `alarm/panel/faulted` is published on alarm (payload matches the discovery
+   `json_attributes_template`) and cleared on restore.
+5. **Fixed.** `_update_panel_status` no longer routes through the unknown-zone skip; panel
+   state (including `triggered`) publishes even for unconfigured zones.
+6. **Fixed (code half of G10).** `on_alarm_restored` reports the armed state remembered
+   from the latest KPM armed bits instead of forcing `"disarmed"`. Refine against captured
+   panel frames during the shadow run.
+7. **Fixed, including G15.** The alarm code comes from a restricted file
+   (`ADMQTT_ALARM_CODE_FILE`: regular, non-symlink, owner-only permissions, non-empty;
+   `Config.read_alarm_code`). With commands enabled, an environment code is refused unless
+   `ADMQTT_ALARM_CODE_EXPLORATORY=1` labels an exploratory hardware-characterization run,
+   which cannot qualify an artifact for production.
+8. **Fixed.** `devices.py`/`zones.yaml.example` use `tamper`.
 9. **Fixed with the DSC command slice:** the bypass switch command is no longer retained;
    stale retained ON deliveries from the prior discovery payload are rejected. Panel and chime
    callbacks also reject retained physical commands.
 
-## Phase 3 — config
+## Phase 3 — config — done
 
-Replace `exec(open("devices.py").read())` (`run.py:44`) with a YAML zone file parsed by
-stdlib-adjacent means (pyyaml is fine once it's a *real* dependency). Keeps the bind-mount
-workflow, drops arbitrary code execution and the cwd dependency. Keep `ADMQTT_*` env vars for
-everything else.
+Zones load from a YAML file (`ADMQTT_DEVICES_FILE`, default `zones.yaml`; schema in
+`zones.yaml.example`; loader `Devices.load_devices`, parity-tested against the legacy
+form). `exec` of `devices.py` remains only as a loudly deprecated fallback when no YAML
+file exists — remove it next release. `ADMQTT_*` env vars stay for everything else.
 
-## Phase 4 — packaging/deployment (compose stack in Proxmox VM)
+## Phase 4 — packaging/deployment — code done, release pending
 
-- Dockerfile: `python:3.13-slim`, non-root `USER`, `HEALTHCHECK` (e.g. MQTT availability
-  topic freshness), `.dockerignore`. Today: `python:3.10.7` full image, root, no healthcheck.
-  The alarmdecoder pin is a private git dependency: the image build needs git plus auth
-  (e.g. a build secret token) or the wheel handed in from the GitHub release instead.
-- Ship a real `docker-compose.yml` (bridge + mosquitto reference). The README requires the host
-  venv because no published image contains this revision and the current Dockerfile cannot
-  authenticate the private AlarmDecoder pin.
-- Assign a new application version and immutable release tag for the guarded build; discovery
-  still reports the historical `0.3.2`, so that value must not be used to identify a cutover
-  artifact.
-- CI: fix `.github/workflows/docker-image.yml` — currently pushes to rgriffogoes' Docker Hub
-  with secrets this fork doesn't have (fails every push), deprecated action majors,
-  `::set-output`. Retarget to GHCR under kars85, bump actions, add lint step (ruff), and an
-  actual test run. CodeQL v2 → v3.
-- Tests: the focused AlarmDecoder consumer contract now exists, including command→wire,
-  reconnect, CONFIG/KPM ordering, mode-disagreement, and duplicate-delivery assertions.
-  Expand it with recorded KPM/LRR/EXP fixtures and complete Bridge event→topic expectations;
-  then run it in CI against the pinned release.
-- Delete stale ceremony: `.bumpversion.cfg`, `notes.txt`, unused `run()` param
-  (`ad_mqtt.run.run`), the `Config.alarm.port` default typo, and `Client._fileno`.
+- **Done.** Dockerfile: `python:3.13-slim`, non-root `USER`, heartbeat-file `HEALTHCHECK`
+  (fed by the G14 heartbeat), `.dockerignore`. The private alarmdecoder pin installs via a
+  BuildKit secret (`--secret id=git_token`); a release wheel COPY is the documented
+  fallback.
+- **Done.** `docker-compose.yml` reference stack (bridge + mosquitto,
+  `mosquitto.conf.example`).
+- **Partially done.** Version is 2.0.0 (`ad_mqtt/version.py`, single source; discovery
+  `sw_version` reads it). The immutable release tag still requires independent review and
+  the hardware canary — no deployable revision exists yet.
+- **Done.** CI: `docker-image.yml` lints (ruff) and runs the suite, then builds and pushes
+  `ghcr.io/kars85/ad-mqtt` on main; needs an `ALARMDECODER_TOKEN` repo secret (read access
+  to kars85/alarmdecoder). CodeQL bumped to v3. `pyproject.toml` replaces `setup.py`.
+- **Open.** Expand tests with recorded KPM/LRR/EXP fixtures from the shadow run and
+  complete Bridge event→topic expectations.
+- **Done.** Stale ceremony deleted: `.bumpversion.cfg`, `notes.txt`, unused `run()` param,
+  the `Config.alarm.port` typo (now 10000), `Client._fileno`, `setup.py`,
+  `bump2version`.
 
 ## Skipped
 

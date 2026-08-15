@@ -13,7 +13,8 @@ for all three repos.
   `git+https://github.com/kars85/alarmdecoder@1.14.0`, a Git-tag-only release on a
   private repo — installs need git auth) — `ad_mqtt/run.py` uses
   public `decoder.wire_events()` because `ad_mqtt/Client.py` duck-types the device API and
-  owns its lifecycle through the legacy poll manager. `ad_mqtt/Bridge.py` consumes exactly
+  owns its lifecycle through the asyncio supervisor coroutine in `ad_mqtt/run.py`.
+  `ad_mqtt/Bridge.py` consumes exactly
   23 events plus `Message`/`RFMessage` attributes. `tests/test_alarmdecoder_contract.py`
   guards those subscriptions, callback signatures, representative panel/RF flow, and
   panel-specific command bytes.
@@ -40,7 +41,10 @@ Before renaming topics, discovery `unique_id`s, or payload shapes: these are ret
 broker and mirrored in HA — plan a migration (clear retained, republish). Before bumping the
 alarmdecoder dependency: diff its event/attribute surface against `Bridge._connect()` and
 run the consumer contract tests. Do not replace explicit `wire_events()` with
-`AlarmDecoder.open()` while `Client` remains a poll-manager-owned duck type.
+`AlarmDecoder.open()` while `Client` remains a supervisor-owned duck type. MQTT rides
+`ad_mqtt/Mqtt.py` (paho-mqtt 2.x, paho's network thread + `call_soon_threadsafe`
+marshaling onto the asyncio loop); `clean_session=True` is a G9 safety requirement —
+never make the command session persistent.
 
 The focused library contract tests use standard-library `unittest` and in-memory fakes;
 they need no MQTT broker or ser2sock instance. Run them against the pinned, installed
@@ -52,10 +56,13 @@ PYTHONPATH=../alarmdecoder python3 -m unittest discover -s tests -v
 
 ## Repo state notes
 
-- Depends on a personal fork of insteon-mqtt (`f1d094/...paho-mqtt-1.6.1`, unpinned HEAD)
-  purely for its select loop + paho wrapper — top modernization target.
+- The insteon-mqtt fork is gone: transport is asyncio + paho-mqtt 2.x
+  (`ad_mqtt/Signal.py`, `ad_mqtt/Mqtt.py`, supervisor in `ad_mqtt/run.py`). Zones load
+  from YAML (`ADMQTT_DEVICES_FILE`, `zones.yaml.example`); the alarm code loads from a
+  restricted file (`ADMQTT_ALARM_CODE_FILE`, G15). Version is 2.0.0 (unreleased).
 - The safe AlarmDecoder compatibility slice is implemented and the dependency is pinned
-  to released tag `1.14.0`; contract tests pass against the installed wheel.
+  to released tag `1.14.0`; contract tests pass against the installed wheel. The suite
+  now also needs `paho-mqtt>=2` and `pyyaml` installed.
 - DSC/Vista command-byte and duplicate-delivery protection are implemented. The exact DSC
   model/zone width, panel-programming settings, and physically attended canary remain hard
   gates before setting `ADMQTT_COMMANDS_ENABLED=true`. No published image contains this
