@@ -178,11 +178,12 @@ class Client:
             if e.errno in [errno.EWOULDBLOCK, errno.ETIMEDOUT]:
                 return 0
 
+            # Any other socket error is terminal.  This runs as an asyncio
+            # add_reader callback: a raise would leave the fd registered and
+            # the supervisor never reconnecting, so close instead.
             LOG.exception("Error during read")
-            if e.errno in [errno.ECONNRESET, errno.EHOSTUNREACH]:
-                self.close()
-                return -1
-            raise
+            self.close()
+            return -1
 
         # If no data was read, the connection was closed.
         if len(buf) == 0:
@@ -236,12 +237,14 @@ class Client:
             if e.errno in [errno.EWOULDBLOCK, errno.ETIMEDOUT]:
                 return
 
-            # Connection is closed.
-            elif e.errno == errno.ECONNRESET:
-                self.close()
-                return
-
-            raise
+            # Any other socket error (ECONNRESET, EPIPE, ENOTCONN,
+            # ECONNABORTED, ...) is terminal.  This runs as an asyncio
+            # add_writer callback: a raise would leave the writable fd
+            # registered and re-fire the failing callback forever, so close
+            # to emit signal_closing and let the supervisor reconnect.
+            LOG.exception("Error during write")
+            self.close()
+            return
 
         LOG.debug("Wrote %d bytes", num)
         if num:
