@@ -1,39 +1,121 @@
 # Reference compose stack: ad-mqtt bridge + mosquitto broker.
 #
-# Before `docker compose up`:
-#   - put a GitHub token that can read kars85/alarmdecoder in ./.git-token
-#   - copy zones.yaml.example to ./zones.yaml and edit for your panel
-#   - copy mosquitto.conf.example to ./mosquitto.conf (enable auth for any
-#     non-isolated network; the DSC cutover handoff requires an ACL'd broker)
+# One-time setup, in this directory:
+#   1. cp zones.yaml.example zones.yaml        # then edit for your panel
+#   2. cp mosquitto.conf.example mosquitto.conf
+#   3. printf '%s' '<github token>' > .git-token
+#      A token with read access to kars85/alarmdecoder (fine-grained PAT,
+#      Contents: Read-only). Needed only when building locally; skip if you
+#      deploy a prebuilt image (see `image:` below). Keep the file out of
+#      git — it is listed in .dockerignore; never commit it.
+#   4. docker compose up -d
+#
+# Security notes:
+#   - ser2sock traffic is plaintext TCP: run this stack on the same trusted
+#     VLAN as the AD2 device, or do not run it at all.
+#   - For any broker reachable beyond an isolated test VLAN, disable
+#     anonymous access in mosquitto.conf and add per-user ACLs; the DSC
+#     cutover handoff (docs/dsc-cutover-handoff.md) requires an ACL'd broker
+#     and a purge of historical `ad-mqtt` sessions before any enabled run.
+#   - ADMQTT_COMMANDS_ENABLED stays "false" until every gate in the handoff
+#     passes. Enabled mode additionally requires the one-shot unlock file
+#     and the restricted alarm-code file to be mounted into the container.
+
 services:
   ad-mqtt:
+    # Build locally from this checkout (requires .git-token, see above) ...
     build:
       context: .
       secrets:
         - git_token
+    # ... or comment out `build:` and deploy a CI-built image instead.
+    # Only an image built from an approved immutable tag is a cutover
+    # artifact; `latest` is fine for read-only telemetry.
+    # image: ghcr.io/kars85/ad-mqtt:2.0.0
+
     restart: unless-stopped
+
+    # Start after the broker reports healthy. The bridge reconnects on its
+    # own, so this is ordering sugar, not a correctness requirement.
     depends_on:
-      - mosquitto
+      mosquitto:
+        condition: service_healthy
+
     environment:
-      ADMQTT_SOCKET_HOST: ser2sock.example.lan
+      # --- ser2sock (AD2 device) ---
+      ADMQTT_SOCKET_HOST: ser2sock.example.lan   # host running ser2sock
       ADMQTT_SOCKET_PORT: "10000"
-      ADMQTT_MQTT_HOST: mosquitto
-      # Physical panel commands stay disabled until every cutover gate in
-      # docs/dsc-cutover-handoff.md passes.
+
+      # --- MQTT broker ---
+      ADMQTT_MQTT_HOST: mosquitto                # service name below
+      ADMQTT_MQTT_PORT: "1883"
+      # Credentials for a non-anonymous broker:
+      # ADMQTT_MQTT_USERNAME: ad-mqtt
+      # ADMQTT_MQTT_PASSWORD: "..."              # prefer env_file over inline
+      # TLS to the broker (mount the files and point at the mounted paths):
+      # ADMQTT_MQTT_CA_CERT: /etc/ad-mqtt/ca.pem
+      # ADMQTT_MQTT_CERTFILE: /etc/ad-mqtt/client.pem
+      # ADMQTT_MQTT_KEYFILE: /etc/ad-mqtt/client.key
+
+      # --- behavior ---
+      # Reset all zones to closed on startup (default false):
+      # ADMQTT_RESTORE_ON_STARTUP: "true"
+      # Physical panel commands. Leave "false" until the cutover handoff
+      # gates pass; enabled mode also requires ADMQTT_COMMANDS_UNLOCK_FILE
+      # and ADMQTT_ALARM_CODE_FILE (restricted, owner-only, mounted files).
       ADMQTT_COMMANDS_ENABLED: "false"
+
+      # --- logging / liveness (image defaults shown, override if needed) ---
+      # ADMQTT_LOG_LEVEL: INFO
+      # ADMQTT_LOG_SCREEN: "true"                # docker logs
+      # ADMQTT_LOG_FILE: ""                      # empty = no file logging
+      # ADMQTT_HEARTBEAT_FILE: /tmp/ad-mqtt-heartbeat  # feeds HEALTHCHECK
+      # ADMQTT_DEVICES_FILE: /etc/ad-mqtt/zones.yaml
+
+    # Alternatively keep secrets/overrides out of this file:
+    # env_file: ad-mqtt.env
+
     volumes:
       - ./zones.yaml:/etc/ad-mqtt/zones.yaml:ro
+
+    # The app writes only the heartbeat file; keep it off the disk layer.
+    tmpfs:
+      - /tmp
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   mosquitto:
     image: eclipse-mosquitto:2
     restart: unless-stopped
+    # Expose the broker to the host/VLAN. Remove `ports:` entirely if only
+    # this stack's containers need the broker (they use the internal
+    # network); Home Assistant on another host needs it published.
     ports:
       - "1883:1883"
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto-data:/mosquitto/data
+    healthcheck:
+      # $$SYS requires no publish rights; works with allow_anonymous or an
+      # authenticated healthcheck user (add -u/-P here if ACL'd).
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/broker/uptime", "-C", "1", "-W", "5"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
+  # Broker persistence (retained messages survive restarts). Note the HA
+  # discovery payloads and bridge state topics are retained by design.
   mosquitto-data:
 
 secrets:
