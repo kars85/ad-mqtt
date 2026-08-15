@@ -13,11 +13,12 @@ can be used to create real "last changed" time sensors if desired in HASS.
 
 ##### Direct python execution
 
-There is no deployable DSC revision until this work is committed, reviewed, and assigned an
-approved immutable commit or tag. Do not clone the default branch for a cutover, and do not
-edit tracked source after approval. The private AlarmDecoder dependency requires GitHub
-credentials. The tree now reports version `2.0.0`, but only a reviewed immutable tag is a
-rollout identity; historical `0.3.2` artifacts must never be used for DSC commands.
+The DSC safety work is merged to `main`, but there is no deployable DSC revision until it
+is independently reviewed and assigned an approved immutable tag. Do not clone the default
+branch for a cutover, and do not edit tracked source after approval. The private
+AlarmDecoder dependency requires GitHub credentials. The tree reports version `2.0.0`, but
+only a reviewed immutable tag is a rollout identity; historical `0.3.2` artifacts must
+never be used for DSC commands.
 
 Zones are configured in a YAML file (see `zones.yaml.example`; path override via
 `ADMQTT_DEVICES_FILE`). The legacy executable `devices.py` is deprecated and read only
@@ -51,9 +52,10 @@ The Dockerfile builds a non-root `python:3.13-slim` image with a heartbeat-file
 docker build --secret id=git_token,src=.git-token -t ad-mqtt .
 ```
 
-No published container image contains this DSC safety work yet; a cutover artifact must be
-an image built from the approved immutable tag through CI. Never use the historical
-`rgriffogoes/ad-mqtt:latest` image for DSC commands.
+CI publishes images to `ghcr.io/kars85/ad-mqtt` (`:latest` plus commit-sha tags) on every
+push to `main`. These contain the DSC safety work but are **not** cutover artifacts: a
+cutover artifact must be an image built from the approved immutable tag. Never use the
+historical `rgriffogoes/ad-mqtt:latest` image for DSC commands.
 
 ##### Docker Compose
 
@@ -97,7 +99,8 @@ Complete this preflight while commands remain disabled:
   and other live MQTT publishers, then clear retained values on all three command topics.
 
 Do not enable commands from a shortened README recipe. Follow the complete handoff, including
-the persistent-session replay fix, broker/session purge, exclusive-writer proof, restricted
+the queued-replay broker evidence (the `clean_session=True` client fix is implemented;
+offline commands are dropped by design), broker/session purge, exclusive-writer proof, restricted
 alarm-code file, exact revision-specific artifact, and no-clobber one-shot unlock procedure. An
 environment-variable alarm code is permitted only for a labeled exploratory hardware run and
 does not qualify an artifact for production. The runner atomically renames the unlock file to
@@ -126,6 +129,8 @@ retained broker topic during rollout. Also clear any retained values on `alarm/p
  - YAML zone configuration (`zones.yaml`), deprecating executable `devices.py`
  - `pyproject.toml` packaging, GHCR CI with lint + tests, non-root slim Docker image,
    reference compose stack
+ - Terminal ser2sock socket errors (EPIPE, ENOTCONN, ECONNABORTED, ...) now close the
+   client and reconnect instead of wedging the asyncio writer callback
 
 ###### Version: 0.3.2
  - updating codebase from original (TD22057) with minor logging fixes, improved Device attributes and versioning
