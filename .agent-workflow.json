@@ -8,10 +8,12 @@
     "ad-mqtt-intake"
   ],
   "verification_commands": [
+    "python3 -m unittest discover -s scripts -p 'test_agent_workflow.py'",
     "python3 -m pytest"
   ],
   "verification_note": "Preserve event payload contracts with alarmdecoder and ser2sock. Prefer synthetic fixtures; connecting to or controlling alarm equipment needs explicit task scope.",
   "ci_workflows": [
+    ".github/workflows/agent-workflow.yml",
     ".github/workflows/docker-image.yml"
   ],
   "setup_issue": "https://github.com/kars85/ad-mqtt/issues/3"
