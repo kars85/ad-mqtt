@@ -24,7 +24,7 @@ C (Claude PM/reviewer): inspect the actual diff against acceptance criteria, rev
 
 Preserve event payload contracts with alarmdecoder and ser2sock. Prefer synthetic fixtures; connecting to or controlling alarm equipment needs explicit task scope.
 
-Configured commands: `python3 -m pytest`
+Configured commands: `python3 -m unittest discover -s tests -v`
 
 Inspect the relevant checked-in workflow before claiming CI is green; only results for the exact candidate commit count. These configuration changes do not authorize firmware flashing, service restarts, mail sends, production-data changes, or synthetic notifications.
 
