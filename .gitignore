@@ -183,3 +183,8 @@ log.txt
 !/.agents/skills/ad-mqtt-intake
 !/.claude/skills/ad-mqtt-intake
 !/scripts/test_agent_workflow.py
+
+# Machine-local agent credentials and generated Python state
+.claude/settings.local.json
+.claude/agent-memory/
+__pycache__/
