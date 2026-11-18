@@ -202,3 +202,7 @@ __pycache__/
 # Isolated workflow parser/test environment
 /.workflow-test-env/
 !/scripts/requirements-agent-workflow.txt
+
+.empirica_reflex_logs/
+
+.breadcrumbs.yaml
