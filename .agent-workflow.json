@@ -1,0 +1,20 @@
+{
+  "name": "ad-mqtt",
+  "repository": "kars85/ad-mqtt",
+  "project_id": "897c71cc-2e3a-4dab-96b8-6bbde85aa42c",
+  "description": "AlarmDecoder to MQTT integration",
+  "skills": [
+    "ad-mqtt-abc",
+    "ad-mqtt-intake"
+  ],
+  "verification_commands": [
+    "python3 -c 'import yaml' && python3 scripts/test_agent_workflow.py",
+    "python3 -m unittest discover -s tests -v"
+  ],
+  "verification_note": "Preserve event payload contracts with alarmdecoder and ser2sock. Prefer synthetic fixtures; connecting to or controlling alarm equipment needs explicit task scope.",
+  "ci_workflows": [
+    ".github/workflows/agent-workflow.yml",
+    ".github/workflows/docker-image.yml"
+  ],
+  "setup_issue": "https://github.com/kars85/ad-mqtt/issues/3"
+}
