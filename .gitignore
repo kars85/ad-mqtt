@@ -152,3 +152,34 @@ cython_debug/
 #.idea/
 
 log.txt
+
+# Local agent runtime and credentials
+.empirica/
+.abc-state/
+.env
+.env.local
+.env.*.local
+
+# Discoverable project-owned workflow files
+!/.agent-workflow.json
+!/.claude/
+!/.claude/commands/
+!/.claude/commands/abc.md
+!/.claude/commands/intake.md
+!/.claude/skills/
+!/.agents/
+!/.agents/skills/
+!/skills/
+!/scripts/
+!/scripts/agent-workflow.py
+!/docs/
+!/docs/agent-workflow.md
+!/skills/ad-mqtt-abc/
+!/skills/ad-mqtt-abc/SKILL.md
+!/.agents/skills/ad-mqtt-abc
+!/.claude/skills/ad-mqtt-abc
+!/skills/ad-mqtt-intake/
+!/skills/ad-mqtt-intake/SKILL.md
+!/.agents/skills/ad-mqtt-intake
+!/.claude/skills/ad-mqtt-intake
+!/scripts/test_agent_workflow.py

@@ -71,3 +71,11 @@ PYTHONPATH=../alarmdecoder python3 -m unittest discover -s tests -v
 - `../alarmdecoder/docs/ecosystem.md` still needs its release, panel-family, dependency-pin,
   and event-count entries synchronized before it can serve as rollout authority.
 - Modernization plan: [`docs/modernization-plan.md`](docs/modernization-plan.md).
+
+<!-- project-workflow:start -->
+## Project work tracking and Empirica
+
+Use [the project workflow](docs/agent-workflow.md) for implementation, maintenance, bug intake and idea intake. GitHub Issues in `kars85/ad-mqtt` are the work tracker; keep acceptance, handoff and verification evidence there. Preserve local specs/runbooks as reference documents. This supersedes older local-only task-tracker instructions.
+
+Run `python3 scripts/agent-workflow.py bootstrap` and `verify` when starting work; `session` opens this conversation's explicit Empirica session. The profile in `.agent-workflow.json` owns the project UUID, repository and checks. Use project-specific `ad-mqtt-abc` / `ad-mqtt-intake` skills or Claude `/abc` / `/intake`; keep findings scoped to this project. Existing safety and deployment constraints continue to apply.
+<!-- project-workflow:end -->
